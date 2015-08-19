@@ -1,8 +1,11 @@
 (ns clevolution.core
-  (:require [clevolution.file-output :refer :all]
+  (:require [clisk.core :refer [image]]
+            [mikera.image.core :as img]
+            [clevolution.file-output :refer :all]
             [clevolution.cliskeval :refer [clisk-eval]]
             [clevolution.cliskstring :refer [random-clisk-expression]]
-            [clevolution.view.view :refer [show frame]] :reload-all))
+            [clevolution.app.view :refer [show frame]] :reload-all)
+  (:import [java.awt.image BufferedImage]))
 
 
 (def default-depth 3)
@@ -21,48 +24,24 @@
 
 
 
-(defn recenter
-  "Move the origin from the default position (top left) to the center of the image"
-  [generator]
-  (str "(offset [-0.5 -0.5 0.0] " generator ")"))
-
-
-(defn zoom-center
-  "Zoom in or out from center of the image,
-  rather than the default top left corner.
-  factor < 1: zoom out; factor > 1: zoom in"
-  [factor generator]
-  (let [zoom-from-origin (fn [generator] (str "(scale " factor " " generator ")"))
-        offset (/ (- factor 1.0) 2)
-        restore-center (fn [generator] (str "(offset [" offset " " offset " 0.0] " generator ")"))]
-    (-> generator
-        zoom-from-origin
-        restore-center)))
-
-
-(defn seamless-tile
-  [scale generator]
-  (str "(seamless " scale " " generator ")"))
-
-
 
 (defn show-clisk-image
   "Generate an image from a generator string and show it in a JFrame"
-  [^String generator & {:keys [center seamless zoom title]}]
-  (let [generator (if center (recenter generator) generator)
-        generator (if seamless (seamless-tile seamless generator) generator)
-        generator (if zoom (zoom-center zoom generator) generator)]
-    (try
-      (let [eval-it (fn [generator] (clisk-eval generator 512))
-            show-it (fn [frame] (show frame :generator generator :title (if title
-                                                                          title
-                                                                          "Clevolution")))]
-        (-> generator
-            eval-it
-            frame
-            show-it))
-      (catch Exception e
-        (.printStackTrace e)))))
+  [^String generator & {:keys [title]}]
+  (try
+    (let [make-image (fn [node] (image node :size 512))
+          show-it (fn [frame] (show frame
+                                    :generator generator
+                                    :title (if title
+                                             title
+                                             "Clevolution")))]
+      (-> generator
+          clisk-eval
+          make-image
+          frame
+          show-it))
+    (catch Exception e
+      (.printStackTrace e))))
 
 
 (defn save-clisk-image
@@ -70,10 +49,14 @@
   ([^String generator ^String uri]
    (save-clisk-image generator 512 uri))
   ([^String generator size ^String uri]
-   (let [context-name "clisk"
-         metadata (make-generator-metadata generator context-name)
-         image (clisk-eval generator size)]
-     (write-image-to-file image metadata uri))))
+   (try
+     (let [context-name "clisk"
+           metadata (make-generator-metadata generator context-name)
+           node (clisk-eval generator)
+           image (image node :size size)]
+       (write-image-to-file image metadata uri))
+     (catch Exception e
+       (.printStackTrace e)))))
 
 
 (defn uri-for-index
@@ -95,3 +78,18 @@
 (defn show-clisk-file
   [uri & more]
   (apply show-clisk-image (get-generator-string uri) :title uri more))
+
+
+(defn depth
+  [form]
+  (if (and (sequential? form)
+           (not (vector? form))) ;; a vector is an rgb color
+    (inc (apply max (map depth (rest form))))
+    0))
+
+(defn file-depth
+  [uri]
+  (-> uri
+      (get-generator-string)
+      (read-string)
+      depth))
